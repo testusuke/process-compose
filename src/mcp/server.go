@@ -137,7 +137,7 @@ func (s *MCPServer) handleListProcesses(ctx context.Context, request *mcp.CallTo
 	if err != nil {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
-				&mcp.TextContent{Text: fmt.Sprintf("Error getting processes state: %v", err)},
+				&mcp.TextContent{Text: fmt.Sprintf("Error getting processes state: %v. This may indicate a configuration loading issue. Please check your process-compose.yaml file for missing dependencies or invalid process definitions.", err)},
 			},
 			IsError: true,
 		}, nil, nil
@@ -165,7 +165,7 @@ func (s *MCPServer) handleGetProcess(ctx context.Context, request *mcp.CallToolR
 	if err != nil {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
-				&mcp.TextContent{Text: fmt.Sprintf("Error getting process state for %s: %v", args.Name, err)},
+				&mcp.TextContent{Text: fmt.Sprintf("Error getting process state for %s: %v. This may indicate the process is not defined in your configuration or there are dependency issues.", args.Name, err)},
 			},
 			IsError: true,
 		}, nil, nil
@@ -294,7 +294,7 @@ func (s *MCPServer) handleGetProjectState(ctx context.Context, request *mcp.Call
 	if err != nil {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
-				&mcp.TextContent{Text: fmt.Sprintf("Error getting project state: %v", err)},
+				&mcp.TextContent{Text: fmt.Sprintf("Error getting project state: %v. This may indicate configuration loading issues or missing process definitions.", err)},
 			},
 			IsError: true,
 		}, nil, nil
