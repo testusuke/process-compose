@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/f1bonacc1/process-compose/src/app"
 	"github.com/f1bonacc1/process-compose/src/config"
@@ -133,59 +134,107 @@ func (s *MCPServer) registerResources() error {
 }
 
 func (s *MCPServer) handleListProcesses(ctx context.Context, request *mcp.CallToolRequest, args EmptyArgs) (*mcp.CallToolResult, any, error) {
-	states, err := s.projectRunner.GetProcessesState()
-	if err != nil {
+	timeoutCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	
+	type processesResult struct {
+		states interface{}
+		err    error
+	}
+	
+	resultChan := make(chan processesResult, 1)
+	go func() {
+		states, err := s.projectRunner.GetProcessesState()
+		resultChan <- processesResult{states: states, err: err}
+	}()
+	
+	select {
+	case result := <-resultChan:
+		if result.err != nil {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: fmt.Sprintf("Error getting processes state: %v. This may indicate a configuration loading issue. Please check your process-compose.yaml file for missing dependencies or invalid process definitions.", result.err)},
+				},
+				IsError: true,
+			}, nil, nil
+		}
+
+		content, err := json.MarshalIndent(result.states, "", "  ")
+		if err != nil {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: fmt.Sprintf("Error marshaling processes state: %v", err)},
+				},
+				IsError: true,
+			}, nil, nil
+		}
+
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
-				&mcp.TextContent{Text: fmt.Sprintf("Error getting processes state: %v. This may indicate a configuration loading issue. Please check your process-compose.yaml file for missing dependencies or invalid process definitions.", err)},
+				&mcp.TextContent{Text: string(content)},
+			},
+		}, result.states, nil
+		
+	case <-timeoutCtx.Done():
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: "Timeout getting processes state"},
 			},
 			IsError: true,
 		}, nil, nil
 	}
-
-	content, err := json.MarshalIndent(states, "", "  ")
-	if err != nil {
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				&mcp.TextContent{Text: fmt.Sprintf("Error marshaling processes state: %v", err)},
-			},
-			IsError: true,
-		}, nil, nil
-	}
-
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			&mcp.TextContent{Text: string(content)},
-		},
-	}, states, nil
 }
 
 func (s *MCPServer) handleGetProcess(ctx context.Context, request *mcp.CallToolRequest, args ProcessNameArgs) (*mcp.CallToolResult, any, error) {
-	state, err := s.projectRunner.GetProcessState(args.Name)
-	if err != nil {
+	timeoutCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	
+	type processResult struct {
+		state interface{}
+		err   error
+	}
+	
+	resultChan := make(chan processResult, 1)
+	go func() {
+		state, err := s.projectRunner.GetProcessState(args.Name)
+		resultChan <- processResult{state: state, err: err}
+	}()
+	
+	select {
+	case result := <-resultChan:
+		if result.err != nil {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: fmt.Sprintf("Error getting process state for %s: %v. This may indicate the process is not defined in your configuration or there are dependency issues.", args.Name, result.err)},
+				},
+				IsError: true,
+			}, nil, nil
+		}
+		
+		content, err := json.MarshalIndent(result.state, "", "  ")
+		if err != nil {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: fmt.Sprintf("Error marshaling process state: %v", err)},
+				},
+				IsError: true,
+			}, nil, nil
+		}
+		
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
-				&mcp.TextContent{Text: fmt.Sprintf("Error getting process state for %s: %v. This may indicate the process is not defined in your configuration or there are dependency issues.", args.Name, err)},
+				&mcp.TextContent{Text: string(content)},
+			},
+		}, result.state, nil
+		
+	case <-timeoutCtx.Done():
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf("Timeout getting process state for %s", args.Name)},
 			},
 			IsError: true,
 		}, nil, nil
 	}
-
-	content, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				&mcp.TextContent{Text: fmt.Sprintf("Error marshaling process state: %v", err)},
-			},
-			IsError: true,
-		}, nil, nil
-	}
-
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			&mcp.TextContent{Text: string(content)},
-		},
-	}, state, nil
 }
 
 func (s *MCPServer) handleStartProcess(ctx context.Context, request *mcp.CallToolRequest, args ProcessNameArgs) (*mcp.CallToolResult, any, error) {
@@ -261,32 +310,56 @@ func (s *MCPServer) handleScaleProcess(ctx context.Context, request *mcp.CallToo
 }
 
 func (s *MCPServer) handleGetProcessLogs(ctx context.Context, request *mcp.CallToolRequest, args LogArgs) (*mcp.CallToolResult, any, error) {
+	timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	
 	endOffset := args.EndOffset
 	limit := args.Limit
 	if limit == 0 {
 		limit = 100
 	}
 
-	logs, err := s.projectRunner.GetProcessLog(args.Name, endOffset, limit)
-	if err != nil {
+	type logResult struct {
+		logs []string
+		err  error
+	}
+	
+	resultChan := make(chan logResult, 1)
+	go func() {
+		logs, err := s.projectRunner.GetProcessLog(args.Name, endOffset, limit)
+		resultChan <- logResult{logs: logs, err: err}
+	}()
+	
+	select {
+	case result := <-resultChan:
+		if result.err != nil {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: fmt.Sprintf("Error getting logs for process %s: %v", args.Name, result.err)},
+				},
+				IsError: true,
+			}, nil, nil
+		}
+		
+		logText := ""
+		for _, line := range result.logs {
+			logText += line + "\n"
+		}
+		
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
-				&mcp.TextContent{Text: fmt.Sprintf("Error getting logs for process %s: %v", args.Name, err)},
+				&mcp.TextContent{Text: logText},
+			},
+		}, map[string]interface{}{"process": args.Name, "lines": len(result.logs), "logs": result.logs}, nil
+		
+	case <-timeoutCtx.Done():
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: fmt.Sprintf("Timeout getting logs for process %s", args.Name)},
 			},
 			IsError: true,
 		}, nil, nil
 	}
-
-	logText := ""
-	for _, line := range logs {
-		logText += line + "\n"
-	}
-
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			&mcp.TextContent{Text: logText},
-		},
-	}, map[string]interface{}{"process": args.Name, "lines": len(logs), "logs": logs}, nil
 }
 
 func (s *MCPServer) handleGetProjectState(ctx context.Context, request *mcp.CallToolRequest, args ProjectStateArgs) (*mcp.CallToolResult, any, error) {

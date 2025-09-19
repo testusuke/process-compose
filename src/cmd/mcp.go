@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/f1bonacc1/process-compose/src/mcp"
 	"github.com/rs/zerolog/log"
@@ -65,12 +66,22 @@ func runMCPServer(args []string) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
+	processReady := make(chan bool, 1)
 	go func() {
 		log.Info().Msg("Starting processes in background...")
 		if err := runner.Run(); err != nil {
 			log.Error().Err(err).Msg("Process runner failed")
 		}
+		time.Sleep(2 * time.Second)
+		processReady <- true
 	}()
+
+	select {
+	case <-processReady:
+		log.Info().Msg("Processes initialized, starting MCP server...")
+	case <-time.After(10 * time.Second):
+		log.Warn().Msg("Process initialization timeout, starting MCP server anyway...")
+	}
 
 	go func() {
 		<-sigChan
