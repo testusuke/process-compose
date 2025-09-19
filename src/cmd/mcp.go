@@ -66,8 +66,16 @@ func runMCPServer(args []string) {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
 	go func() {
+		log.Info().Msg("Starting processes in background...")
+		if err := runner.Run(); err != nil {
+			log.Error().Err(err).Msg("Process runner failed")
+		}
+	}()
+
+	go func() {
 		<-sigChan
 		log.Info().Msg("Received interrupt signal, shutting down MCP server...")
+		_ = runner.ShutDownProject()
 		cancel()
 	}()
 
